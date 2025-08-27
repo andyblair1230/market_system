@@ -17,5 +17,17 @@ dev = ["black", "ruff", "mypy", "pytest", "pre-commit"]
 viewer = ["PySide6>=6.7", "pyqtgraph>=0.13"]
 storage = ["pyarrow>=15"]
 
+# convenience extra that installs everything
+all = [
+    "black",
+    "ruff",
+    "mypy",
+    "pytest",
+    "pre-commit",
+    "PySide6>=6.7",
+    "pyqtgraph>=0.13",
+    "pyarrow>=15"
+]
+
 [project.scripts]
 market-system = "market_system.cli:main"
