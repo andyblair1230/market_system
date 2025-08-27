@@ -1,5 +1,8 @@
 import argparse
 import sys
+import shutil
+import subprocess
+import platform
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
@@ -27,6 +30,65 @@ def cmd_viewer(args: argparse.Namespace) -> int:
 
     app = ViewerApp()
     app.start()
+    return 0
+
+
+def _run(cmd: list[str]) -> tuple[int, str]:
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+        return 0, out.strip()
+    except (OSError, subprocess.CalledProcessError) as e:
+        msg = (
+            e.output.strip() if isinstance(e, subprocess.CalledProcessError) else str(e)
+        )
+        return 1, msg
+
+
+def cmd_doctor(_: argparse.Namespace) -> int:
+    print("=== market_system environment check ===")
+    print(f"OS: {platform.system()} {platform.release()} ({platform.version()})")
+    print(f"Python: {sys.executable}")
+
+    # Python tools (in venv)
+    for name in ["pre-commit", "black", "ruff", "mypy", "pytest"]:
+        path = shutil.which(name)
+        print(f"{name:>10}: {'OK ' + path if path else 'NOT FOUND'}")
+
+    # CMake
+    cmake_path = shutil.which("cmake")
+    if cmake_path:
+        code, out = _run(["cmake", "--version"])
+        print(f"{'cmake':>10}: OK {cmake_path}")
+        if code == 0:
+            first = out.splitlines()[0]
+            print(f"{'':>12}{first}")
+        else:
+            print(f"{'':>12}Problem running cmake: {out}")
+    else:
+        print(f"{'cmake':>10}: NOT FOUND")
+
+    # MSVC cl (only meaningful on Windows)
+    if platform.system() == "Windows":
+        cl_path = shutil.which("cl")
+        if cl_path:
+            code, out = _run(["cl"])
+            banner = out.splitlines()[0] if out else "OK"
+            print(f"{'cl':>10}: OK {cl_path}")
+            print(f"{'':>12}{banner}")
+        else:
+            print(
+                f"{'cl':>10}: NOT FOUND (open x64 Native Tools for VS 2022 or add MSVC to PATH)"
+            )
+
+    # Viewer deps sanity
+    try:
+        import PySide6  # noqa: F401
+        import pyqtgraph  # noqa: F401
+
+        print(f"{'viewer':>10}: PySide6 + pyqtgraph AVAILABLE")
+    except Exception as e:  # noqa: BLE001
+        print(f"{'viewer':>10}: MISSING ({e})")
+
     return 0
 
 
@@ -62,6 +124,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("viewer", help="launch desktop viewer")
     sp.set_defaults(func=cmd_viewer)
+
+    sp = sub.add_parser("doctor", help="environment sanity checks")
+    sp.set_defaults(func=cmd_doctor)
 
     sp = sub.add_parser(
         "exec", help="connect execution adapter (Sierra) and run strategy"
