@@ -16,8 +16,31 @@ def cmd_align(args: argparse.Namespace) -> int:
 
 
 def cmd_store(args: argparse.Namespace) -> int:
-    print(f"[store] table={args.table} parquet={args.parquet}")
-    return 0
+    from pathlib import Path
+
+    try:
+        import pyarrow.parquet as pq  # read source parquet
+        from market_system.storage.writer import ParquetWriter
+    except Exception:
+        print("ERROR: storage deps missing. Install with: pip install -e .[storage]")
+        return 2
+
+    src = Path(args.table)
+    dst = Path(args.parquet)
+
+    try:
+        # read the input as parquet (file or dataset dir)
+        if src.is_dir():
+            tbl = pq.ParquetDataset(str(src)).read()
+        else:
+            tbl = pq.read_table(str(src))
+
+        ParquetWriter().write(tbl, dst)
+        print(f"[store] wrote {dst}")
+        return 0
+    except Exception as e:  # keep this narrow; we’ll refine when readers expand
+        print(f"[store] failed: {e}")
+        return 1
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
