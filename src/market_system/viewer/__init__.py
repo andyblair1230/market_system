@@ -1,3 +1,3 @@
-from .server import ViewerServer
+from .app import ViewerApp
 
-__all__ = ["ViewerServer"]
+__all__ = ["ViewerApp"]
