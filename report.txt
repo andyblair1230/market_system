@@ -1,0 +1,1445 @@
+Folder PATH listing
+Volume serial number is 0000000D 46EB:BC49
+C:\DEV\MARKET_SYSTEM\SRC\MARKET_SYSTEM
+³   cli.py
+³   __init__.py
+³   __main__.py
+³   
+ÃÄÄÄalignment
+³       aligner.py
+³       __init__.py
+³       
+ÃÄÄÄcore
+³   ³   __init__.py
+³   ³   
+³   ÃÄÄÄcpp
+³   ³       bindings.cpp
+³   ³       CMakeLists.txt
+³   ³       
+³   ÀÄÄÄrust
+³           Cargo.toml
+³           lib.rs
+³           
+ÃÄÄÄexecution
+³       sierra_adapter.py
+³       __init__.py
+³       
+ÃÄÄÄingestion
+³   ³   reader.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           reader.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄrealtime
+³       stream.py
+³       __init__.py
+³       
+ÃÄÄÄstorage
+³   ³   schema.py
+³   ³   writer.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           schema.cpython-313.pyc
+³           writer.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÃÄÄÄviewer
+³   ³   app.py
+³   ³   __init__.py
+³   ³   
+³   ÀÄÄÄ__pycache__
+³           app.cpython-313.pyc
+³           __init__.cpython-313.pyc
+³           
+ÀÄÄÄ__pycache__
+        cli.cpython-313.pyc
+        __init__.cpython-313.pyc
+        __main__.cpython-313.pyc
+        
+=========================
+C:\dev\market_system\src\market_system\cli.py
+-------------------------
+import argparse
+import sys
+import shutil
+import platform
+from pathlib import Path
+
+from market_system.ingestion.reader import ScidIngestor, IngestConfig
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    cfg = IngestConfig(
+        source=Path(args.source),
+        out_root=Path(args.out or "data"),
+        symbol=args.symbol,  # root like "ES"
+        start=args.start,
+        end=args.end,
+        overwrite=args.overwrite,
+    )
+    ScidIngestor().ingest(cfg)
+    return 0
+
+
+def cmd_align(args: argparse.Namespace) -> int:
+    print(f"[align] trades={args.trades} depth={args.depth} out={args.out}")
+    return 0
+
+
+def cmd_store(args: argparse.Namespace) -> int:
+    print(f"[store] table={args.table} parquet={args.parquet}")
+    return 0
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    print(f"[replay] aligned={args.aligned}")
+    return 0
+
+
+def cmd_viewer(args: argparse.Namespace) -> int:
+    from market_system.viewer import ViewerApp
+
+    app = ViewerApp()
+    app.start()
+    return 0
+
+
+def _run(cmd: list[str]) -> tuple[int, str]:
+    import subprocess as sp
+
+    try:
+        out = sp.check_output(cmd, stderr=sp.STDOUT, text=True)
+        return 0, out.strip()
+    except (OSError, sp.CalledProcessError) as e:
+        msg = e.output.strip() if isinstance(e, sp.CalledProcessError) else str(e)
+        return 1, msg
+
+
+def cmd_doctor(_: argparse.Namespace) -> int:
+    print("=== market_system environment check ===")
+    print(f"OS: {platform.system()} {platform.release()} ({platform.version()})")
+    print(f"Python: {sys.executable}")
+
+    for name in ["pre-commit", "black", "ruff", "mypy", "pytest"]:
+        path = shutil.which(name)
+        print(f"{name:>10}: {'OK ' + path if path else 'NOT FOUND'}")
+
+    cmake_path = shutil.which("cmake")
+    if cmake_path:
+        code, out = _run(["cmake", "--version"])
+        print(f"{'cmake':>10}: OK {cmake_path}")
+        if code == 0:
+            first = out.splitlines()[0]
+            print(f"{'':>12}{first}")
+        else:
+            print(f"{'':>12}Problem running cmake: {out}")
+    else:
+        print(f"{'cmake':>10}: NOT FOUND")
+
+    if platform.system() == "Windows":
+        cl_path = shutil.which("cl")
+        if cl_path:
+            code, out = _run(["cl"])
+            banner = out.splitlines()[0] if out else "OK"
+            print(f"{'cl':>10}: OK {cl_path}")
+            print(f"{'':>12}{banner}")
+        else:
+            print(
+                f"{'cl':>10}: NOT FOUND (open x64 Native Tools for VS 2022 or add MSVC to PATH)"
+            )
+
+    try:
+        import PySide6  # noqa: F401
+        import pyqtgraph  # noqa: F401
+
+        print(f"{'viewer':>10}: PySide6 + pyqtgraph AVAILABLE")
+    except Exception as e:  # noqa: BLE001
+        print(f"{'viewer':>10}: MISSING ({e})")
+
+    return 0
+
+
+def cmd_exec(args: argparse.Namespace) -> int:
+    print(f"[exec] strategy={args.strategy} dry_run={args.dry_run}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="market-system")
+    sub = p.add_subparsers(dest="command", required=True)
+
+    sp = sub.add_parser(
+        "ingest",
+        help="Convert ES SCID + Depth to Parquet (daily partitions, only days with depth)",
+    )
+    sp.add_argument("source", help="Path to SierraChart Data dir or a .scid file")
+    sp.add_argument(
+        "--symbol",
+        default="ES",
+        help="Root symbol (e.g., ES). We auto-detect the active contract from filenames.",
+    )
+    sp.add_argument("--out", help="Output root for dataset (default: ./data)")
+    sp.add_argument("--start", help="Start date (YYYY-MM-DD, UTC)")
+    sp.add_argument("--end", help="End date (YYYY-MM-DD, UTC)")
+    sp.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Clear existing output for this symbol/contract before writing",
+    )
+    sp.set_defaults(func=cmd_ingest)
+
+    sp = sub.add_parser("align", help="align trades and depth")
+    sp.add_argument("trades", help="path to trades table (e.g., parquet)")
+    sp.add_argument("depth", help="path to depth table (e.g., parquet)")
+    sp.add_argument(
+        "--out", required=False, help="output path for aligned table (parquet)"
+    )
+    sp.set_defaults(func=cmd_align)
+
+    sp = sub.add_parser("store", help="persist a table to parquet")
+    sp.add_argument("table", help="input table path")
+    sp.add_argument("--parquet", required=True, help="destination parquet path")
+    sp.set_defaults(func=cmd_store)
+
+    sp = sub.add_parser("replay", help="replay an aligned dataset")
+    sp.add_argument("aligned", help="path to aligned table (parquet)")
+    sp.set_defaults(func=cmd_replay)
+
+    sp = sub.add_parser("viewer", help="launch desktop viewer")
+    sp.set_defaults(func=cmd_viewer)
+
+    sp = sub.add_parser("doctor", help="environment sanity checks")
+    sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser(
+        "exec", help="connect execution adapter (Sierra) and run strategy"
+    )
+    sp.add_argument("strategy", help="strategy name or path")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.set_defaults(func=cmd_exec)
+
+    return p
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    rc = args.func(args)
+    sys.exit(rc)
+
+=========================
+C:\dev\market_system\src\market_system\__init__.py
+-------------------------
+__all__ = [
+    "ingestion",
+    "storage",
+    "alignment",
+    "realtime",
+    "viewer",
+    "execution",
+    "core",
+]
+
+=========================
+C:\dev\market_system\src\market_system\__main__.py
+-------------------------
+from .cli import main
+
+if __name__ == "__main__":
+    main()
+
+=========================
+C:\dev\market_system\src\market_system\alignment\aligner.py
+-------------------------
+from typing import Any
+
+
+class Aligner:
+    def __init__(self) -> None:
+        pass
+
+    def align(self, trades: Any, depth: Any) -> Any:
+        pass
+.
+=========================
+C:\dev\market_system\src\market_system\alignment\__init__.py
+-------------------------
+from .aligner import Aligner
+
+__all__ = ["Aligner"]
+.
+=========================
+C:\dev\market_system\src\market_system\core\__init__.py
+-------------------------
+# native bindings live under core/cpp or core/rust
+.
+=========================
+C:\dev\market_system\src\market_system\core\cpp\CMakeLists.txt
+-------------------------
+# placeholder
+.
+=========================
+C:\dev\market_system\src\market_system\core\cpp\bindings.cpp
+-------------------------
+// placeholder.
+=========================
+C:\dev\market_system\src\market_system\core\rust\Cargo.toml
+-------------------------
+# placeholder.
+=========================
+C:\dev\market_system\src\market_system\core\rust\lib.rs
+-------------------------
+// placeholder.
+=========================
+C:\dev\market_system\src\market_system\execution\sierra_adapter.py
+-------------------------
+from typing import Any, Dict
+
+
+class SierraAdapter:
+    def __init__(self) -> None:
+        pass
+
+    def connect(self) -> None:
+        pass
+
+    def send_order(self, params: Dict[str, Any]) -> Any:
+        pass
+
+    def disconnect(self) -> None:
+        pass
+.
+=========================
+C:\dev\market_system\src\market_system\execution\__init__.py
+-------------------------
+from .sierra_adapter import SierraAdapter
+
+__all__ = ["SierraAdapter"]
+.
+=========================
+C:\dev\market_system\src\market_system\ingestion\reader.py
+-------------------------
+# SCID + Depth -> Parquet (daily partitions) for ES
+from __future__ import annotations
+
+import re
+import struct
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+
+# ---------------- Sierra time conversion ----------------
+
+_SC_EPOCH = datetime(1899, 12, 30, tzinfo=timezone.utc)
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+_SC_TO_UNIX_US: int = int((_UNIX_EPOCH - _SC_EPOCH).total_seconds() * 1_000_000)
+
+
+def _sc_us_to_unix_us(sc_us: int) -> int:
+    # microseconds since 1899-12-30 â†’ microseconds since 1970-01-01
+    return sc_us - _SC_TO_UNIX_US
+
+
+# ---------------- Contracts & filenames ----------------
+
+MONTH_CODES = "FGHJKMNQUVXZ"
+MONTH_ORDER = {m: i for i, m in enumerate(MONTH_CODES)}
+# For ES we expect quarterly months only:
+ES_QUARTERLY = set("HMUZ")
+
+
+_CONTRACT_RE = re.compile(
+    r"^(?P<root>[A-Z]+)(?P<mon>[FGHJKMNQUVXZ])(?P<yy>\d{2}).*?\.scid$", re.IGNORECASE
+)
+
+
+def _month_letter_for_es(mon: str) -> bool:
+    return mon.upper() in ES_QUARTERLY
+
+
+def _parse_contract_from_scid_name(name: str) -> Tuple[str, str, str]:
+    """
+    Extract (root, month_letter, yy) from a SCID filename (stem or full name).
+    Example: ESU25_FUT_CME.scid -> ('ES', 'U', '25')
+    """
+    m = _CONTRACT_RE.match(name.upper())
+    if not m:
+        raise ValueError(f"Cannot parse contract from SCID name: {name}")
+    return m.group("root"), m.group("mon"), m.group("yy")
+
+
+def _choose_latest_contract(scid_files: List[Path], root: str) -> Path:
+    """
+    From a list of matching SCID files, choose the latest by (yy, month-order).
+    For ES: only consider HMUZ (quarterlies).
+    """
+    scored: List[Tuple[int, int, Path]] = []
+    for p in scid_files:
+        try:
+            r, mon, yy = _parse_contract_from_scid_name(p.name)
+            if r != root.upper():
+                continue
+            if root.upper() == "ES" and not _month_letter_for_es(mon):
+                continue
+            scored.append((int(yy), MONTH_ORDER[mon.upper()], p))
+        except Exception:
+            continue
+
+    if not scored:
+        raise FileNotFoundError(
+            f"No SCID files found for root={root} (quarterlies for ES)"
+        )
+
+    scored.sort()  # ascending by (yy, month)
+    return scored[-1][2]
+
+
+# ---------------- Binary formats (SCID & Depth) ----------------
+
+# SCID header/record (docs: header=56 bytes, record=40 bytes)
+_SCID_HDR_FMT = "<4sI I H H I 36s"  # 56 bytes
+_SCID_HDR_SIZE = struct.calcsize(_SCID_HDR_FMT)
+_SCID_REC_FMT = "<q f f f f I I I I"  # 40 bytes
+_SCID_REC_SIZE = struct.calcsize(_SCID_REC_FMT)
+
+# Depth header/record (docs: header=64 bytes, record=24 bytes)
+_DEPTH_MAGIC = 0x44444353  # "SCDD"
+_DEPTH_HDR_FMT = "<IIII48s"  # 64 bytes
+_DEPTH_HDR_SIZE = struct.calcsize(_DEPTH_HDR_FMT)
+_DEPTH_REC_FMT = "<q B B H f I I"  # 24 bytes
+_DEPTH_REC_SIZE = struct.calcsize(_DEPTH_REC_FMT)
+
+
+# ---------------- Config ----------------
+
+
+@dataclass(frozen=True)
+class IngestConfig:
+    source: Path  # Data dir or a .scid file
+    out_root: Path  # output root: e.g., ./data
+    symbol: str = "ES"  # root like "ES"
+    start: Optional[str] = None  # YYYY-MM-DD (UTC)
+    end: Optional[str] = None  # YYYY-MM-DD (UTC)
+    overwrite: bool = False
+    # batch sizes / logging
+    flush_rows: int = 500_000
+    progress_every: int = 1_000_000
+
+
+# ---------------- Ingestor ----------------
+
+
+class ScidIngestor:
+    """
+    Ingest ES trades (.scid) and matching Depth files into Parquet.
+    Layout:
+      out_root/ES/<YY>/<M>/<YYYY-MM-DD>/{trades,depth}/ES<M><YY>.<YYYY-MM-DD>.parquet
+    Only writes trades for days that have a corresponding depth file.
+    """
+
+    def ingest(self, cfg: IngestConfig) -> None:
+        root = cfg.symbol.upper()
+        scid_path, base_stem = self._resolve_scid(cfg.source, root)
+        r, mon_letter, yy = _parse_contract_from_scid_name(scid_path.name)
+        if r != root:
+            # If you pointed at a specific file directly, we still use its parsed root.
+            root = r
+
+        # Discover depth files/dates for this contract
+        depth_dir = self._resolve_depth_dir(cfg.source)
+        depth_map = self._discover_depth_files(depth_dir, base_stem)
+        depth_days: Set[str] = set(depth_map.keys())
+
+        if cfg.start:
+            start_d = datetime.fromisoformat(cfg.start).date()
+            depth_days = {
+                d for d in depth_days if datetime.fromisoformat(d).date() >= start_d
+            }
+        if cfg.end:
+            end_d = datetime.fromisoformat(cfg.end).date()
+            depth_days = {
+                d for d in depth_days if datetime.fromisoformat(d).date() <= end_d
+            }
+
+        print(
+            f"[ingest] contract={root}{mon_letter}{yy}  depth-days={len(depth_days)}  base={base_stem}"
+        )
+
+        # Optional: clear output for this contract if requested
+        if cfg.overwrite:
+            self._wipe_contract_output(cfg.out_root, root, yy, mon_letter)
+
+        # 1) Ingest Depth files first (so their days exist)
+        self._ingest_depth_files(
+            depth_map=depth_map,
+            allowed_days=depth_days,
+            out_root=cfg.out_root,
+            root=root,
+            yy=yy,
+            mon=mon_letter,
+            progress=True,
+        )
+
+        # 2) Ingest Trades from SCID, writing ONLY for days in depth_days
+        self._ingest_scid_trades(
+            scid_path=scid_path,
+            out_root=cfg.out_root,
+            root=root,
+            yy=yy,
+            mon=mon_letter,
+            allowed_days=depth_days,
+            start=cfg.start,
+            end=cfg.end,
+            flush_rows=cfg.flush_rows,
+            progress_every=cfg.progress_every,
+        )
+
+        print(f"[ingest] DONE  contract={root}{mon_letter}{yy}  out={cfg.out_root}")
+
+    # --------- SCID Trades ---------
+
+    def _ingest_scid_trades(
+        self,
+        *,
+        scid_path: Path,
+        out_root: Path,
+        root: str,
+        yy: str,
+        mon: str,
+        allowed_days: Set[str],
+        start: Optional[str],
+        end: Optional[str],
+        flush_rows: int,
+        progress_every: int,
+    ) -> None:
+        if not allowed_days:
+            print("[trades] skipped (no depth days present)")
+            return
+
+        start_date = datetime.fromisoformat(start).date() if start else None
+        end_date = datetime.fromisoformat(end).date() if end else None
+
+        with open(scid_path, "rb") as f:
+            self._read_scid_header(f)
+
+            # buffers keyed per-day to write a single Parquet file per day
+            day_bufs: Dict[str, Dict[str, list]] = {}
+            total = 0
+            written_days = 0
+
+            block_sz = 65536 * _SCID_REC_SIZE  # bigger blocks for speed
+            while True:
+                chunk = f.read(block_sz)
+                if not chunk:
+                    break
+                # trim any trailing partial record
+                rem = len(chunk) % _SCID_REC_SIZE
+                if rem:
+                    chunk = chunk[: len(chunk) - rem]
+
+                for rec in struct.iter_unpack(_SCID_REC_FMT, chunk):
+                    (
+                        sc_us,
+                        open_p,
+                        high_p,
+                        low_p,
+                        close_p,
+                        num_trades,
+                        total_vol,
+                        bid_vol,
+                        ask_vol,
+                    ) = rec
+
+                    unix_us = _sc_us_to_unix_us(sc_us)
+                    dts = datetime.utcfromtimestamp(unix_us / 1_000_000)
+                    d = dts.date()
+
+                    if start_date and d < start_date:
+                        continue
+                    if end_date and d > end_date:
+                        continue
+
+                    date_str = d.isoformat()
+                    if date_str not in allowed_days:
+                        continue  # ONLY write days that have depth
+
+                    buf = day_bufs.get(date_str)
+                    if buf is None:
+                        buf = {
+                            "ts": [],
+                            "open": [],
+                            "high": [],
+                            "low": [],
+                            "close": [],
+                            "num_trades": [],
+                            "total_volume": [],
+                            "bid_volume": [],
+                            "ask_volume": [],
+                        }
+                        day_bufs[date_str] = buf
+
+                    buf["ts"].append(unix_us)
+                    buf["open"].append(float(open_p))
+                    buf["high"].append(float(high_p))
+                    buf["low"].append(float(low_p))
+                    buf["close"].append(float(close_p))
+                    buf["num_trades"].append(int(num_trades))
+                    buf["total_volume"].append(int(total_vol))
+                    buf["bid_volume"].append(int(bid_vol))
+                    buf["ask_volume"].append(int(ask_vol))
+
+                    total += 1
+                    if total % progress_every == 0:
+                        print(f"[trades] read {total:,} records ... last={date_str}")
+
+                    # opportunistic flush if buffers get large
+                    if sum(len(v["ts"]) for v in day_bufs.values()) >= flush_rows:
+                        written_days += self._flush_trade_days(
+                            out_root, root, yy, mon, day_bufs
+                        )
+
+            # final flush
+            written_days += self._flush_trade_days(out_root, root, yy, mon, day_bufs)
+
+        print(f"[trades] wrote {written_days} day files (records read: {total:,})")
+
+    def _flush_trade_days(
+        self,
+        out_root: Path,
+        root: str,
+        yy: str,
+        mon: str,
+        day_bufs: Dict[str, Dict[str, list]],
+    ) -> int:
+        written = 0
+        for date_str, cols in list(day_bufs.items()):
+            if not cols["ts"]:
+                continue
+            tbl = pa.table(
+                {
+                    "ts": pa.array(cols["ts"], type=pa.timestamp("us")),
+                    "open": pa.array(cols["open"], type=pa.float32()),
+                    "high": pa.array(cols["high"], type=pa.float32()),
+                    "low": pa.array(cols["low"], type=pa.float32()),
+                    "close": pa.array(cols["close"], type=pa.float32()),
+                    "num_trades": pa.array(cols["num_trades"], type=pa.uint32()),
+                    "total_volume": pa.array(cols["total_volume"], type=pa.uint32()),
+                    "bid_volume": pa.array(cols["bid_volume"], type=pa.uint32()),
+                    "ask_volume": pa.array(cols["ask_volume"], type=pa.uint32()),
+                }
+            )
+            out_dir = out_root / root / yy / mon / date_str / "trades"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{root}{mon}{yy}.{date_str}.parquet"
+            pq.write_table(
+                tbl,
+                out_dir / fname,
+                compression="zstd",
+                coerce_timestamps="us",
+            )
+            written += 1
+            del day_bufs[date_str]  # free
+            print(f"[trades] wrote {yy}/{mon}/{date_str} ({len(cols['ts']):,} rows)")
+        return written
+
+    # --------- Depth ---------
+
+    def _ingest_depth_files(
+        self,
+        *,
+        depth_map: Dict[str, Path],
+        allowed_days: Set[str],
+        out_root: Path,
+        root: str,
+        yy: str,
+        mon: str,
+        progress: bool = True,
+    ) -> None:
+        if not depth_map:
+            print("[depth] none found â€” skipping")
+            return
+
+        # Only process allowed_days subset
+        days = sorted(d for d in depth_map.keys() if d in allowed_days)
+        if not days:
+            print("[depth] no matching days in selected range â€” skipping")
+            return
+
+        total_files = len(days)
+        for i, day in enumerate(days, 1):
+            path = depth_map[day]
+            rows = self._read_write_depth_day(path, out_root, root, yy, mon, day)
+            if progress:
+                print(f"[depth] ({i}/{total_files}) {yy}/{mon}/{day} -> {rows:,} rows")
+
+    def _read_write_depth_day(
+        self,
+        path: Path,
+        out_root: Path,
+        root: str,
+        yy: str,
+        mon: str,
+        date_str: str,
+    ) -> int:
+        with open(path, "rb") as f:
+            self._read_depth_header(f)
+
+            # read whole file by blocks; but most depth files are per-day
+            block_sz = 65536 * _DEPTH_REC_SIZE
+            col_ts: List[int] = []
+            col_cmd: List[int] = []
+            col_flags: List[int] = []
+            col_orders: List[int] = []
+            col_price: List[float] = []
+            col_qty: List[int] = []
+
+            while True:
+                chunk = f.read(block_sz)
+                if not chunk:
+                    break
+                rem = len(chunk) % _DEPTH_REC_SIZE
+                if rem:
+                    chunk = chunk[: len(chunk) - rem]
+                for rec in struct.iter_unpack(_DEPTH_REC_FMT, chunk):
+                    sc_us, cmd, flags, num_orders, price, qty, _reserved = rec
+                    unix_us = _sc_us_to_unix_us(sc_us)
+                    # We trust filename date â†’ still keep all records; no filtering here
+                    col_ts.append(unix_us)
+                    col_cmd.append(int(cmd))
+                    col_flags.append(int(flags))
+                    col_orders.append(int(num_orders))
+                    col_price.append(float(price))
+                    col_qty.append(int(qty))
+
+        tbl = pa.table(
+            {
+                "ts": pa.array(col_ts, type=pa.timestamp("us")),
+                "command": pa.array(col_cmd, type=pa.uint8()),
+                "flags": pa.array(col_flags, type=pa.uint8()),
+                "num_orders": pa.array(col_orders, type=pa.uint16()),
+                "price": pa.array(col_price, type=pa.float32()),
+                "quantity": pa.array(col_qty, type=pa.uint32()),
+            }
+        )
+        out_dir = out_root / root / yy / mon / date_str / "depth"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fname = f"{root}{mon}{yy}.{date_str}.parquet"
+        pq.write_table(
+            tbl,
+            out_dir / fname,
+            compression="zstd",
+            coerce_timestamps="us",
+        )
+        return tbl.num_rows
+
+    # --------- Discovery & I/O helpers ---------
+
+    def _resolve_scid(self, source: Path, root: str) -> Tuple[Path, str]:
+        """
+        Return (scid_path, base_stem). If source is a file, we use it.
+        If source is a dir, we search for the latest contract for the root.
+        """
+        if source.is_file() and source.suffix.lower() == ".scid":
+            return source, source.stem
+
+        if not source.is_dir():
+            raise FileNotFoundError(f"Source not found: {source}")
+
+        # search for SCID files for this root
+        # We allow any suffix after the contract code, e.g. ESU25_FUT_CME.scid
+        candidates = list(source.glob(f"{root.upper()}[A-Z][0-9][0-9]*.scid"))
+        if not candidates:
+            raise FileNotFoundError(f"No SCID files for root={root} under {source}")
+
+        chosen = _choose_latest_contract(candidates, root.upper())
+        return chosen, chosen.stem
+
+    def _resolve_depth_dir(self, source: Path) -> Path:
+        if source.is_file():
+            # Common layout: SCID file is in Data/, depth under Data/MarketDepthData
+            depth_dir = source.parent / "MarketDepthData"
+        else:
+            depth_dir = source / "MarketDepthData"
+        return depth_dir
+
+    def _discover_depth_files(self, depth_dir: Path, base_stem: str) -> Dict[str, Path]:
+        """
+        Find depth day files for this contract. We accept any filename
+        that contains the contract stem and a YYYY-MM-DD date. If the date
+        is not in the name, we fall back to peeking the first record.
+        Returns: { 'YYYY-MM-DD': Path }
+        """
+        if not depth_dir.exists():
+            return {}
+
+        depth_files = [
+            p for p in depth_dir.iterdir() if p.is_file() and base_stem in p.name
+        ]
+        day_map: Dict[str, Path] = {}
+
+        date_re = re.compile(r"(\d{4}-\d{2}-\d{2})")
+        for p in depth_files:
+            m = date_re.search(p.name)
+            if m:
+                day_map[m.group(1)] = p
+                continue
+
+            # Fallback: read header + first record to infer day
+            try:
+                with open(p, "rb") as f:
+                    self._read_depth_header(f)
+                    first = f.read(_DEPTH_REC_SIZE)
+                    if len(first) == _DEPTH_REC_SIZE:
+                        (sc_us, *_rest) = struct.unpack(_DEPTH_REC_FMT, first)
+                        unix_us = _sc_us_to_unix_us(sc_us)
+                        d = (
+                            datetime.utcfromtimestamp(unix_us / 1_000_000)
+                            .date()
+                            .isoformat()
+                        )
+                        day_map[d] = p
+            except Exception:
+                # Ignore non-depth or unreadable files
+                pass
+
+        return day_map
+
+    def _wipe_contract_output(
+        self, out_root: Path, root: str, yy: str, mon: str
+    ) -> None:
+        base = out_root / root / yy / mon
+        if not base.exists():
+            return
+        # Remove **only** this contract-month tree
+        for p in sorted(base.rglob("*"), reverse=True):
+            try:
+                if p.is_file():
+                    p.unlink()
+                else:
+                    p.rmdir()
+            except OSError:
+                pass
+        try:
+            base.rmdir()
+        except OSError:
+            pass
+
+    # ---- Header validators ----
+
+    def _read_scid_header(self, f) -> None:
+        hdr = f.read(_SCID_HDR_SIZE)
+        if len(hdr) != _SCID_HDR_SIZE:
+            raise ValueError("SCID header too short")
+        file_id, hdr_size, rec_size, version, _unused, _utc_idx, _reserve = (
+            struct.unpack(_SCID_HDR_FMT, hdr)
+        )
+        if file_id != b"SCID":
+            raise ValueError("Not a SCID file (missing 'SCID' magic)")
+        if hdr_size != _SCID_HDR_SIZE:
+            raise ValueError(f"Unexpected SCID header size: {hdr_size}")
+        if rec_size != _SCID_REC_SIZE:
+            raise ValueError(f"Unexpected SCID record size: {rec_size} (expected 40)")
+        # version currently 1; accept any
+
+    def _read_depth_header(self, f) -> None:
+        hdr = f.read(_DEPTH_HDR_SIZE)
+        if len(hdr) < 16:
+            raise ValueError("Depth header too short")
+        (magic, hdr_size, rec_size, version, _reserve) = struct.unpack(
+            _DEPTH_HDR_FMT, hdr
+        )
+        if magic != _DEPTH_MAGIC:
+            raise ValueError("Not a Depth file (missing 'SCDD' magic)")
+        if hdr_size != _DEPTH_HDR_SIZE:
+            raise ValueError(f"Unexpected Depth header size: {hdr_size}")
+        if rec_size != _DEPTH_REC_SIZE:
+            raise ValueError(f"Unexpected Depth record size: {rec_size} (expected 24)")
+        # version 1 per docs; accept any
+.
+=========================
+C:\dev\market_system\src\market_system\ingestion\__init__.py
+-------------------------
+from .reader import ScidIngestor, IngestConfig
+
+# Back-compat alias so older references still work if any:
+SCIDReader = ScidIngestor
+
+__all__ = ["ScidIngestor", "IngestConfig", "SCIDReader"]
+.
+=========================
+C:\dev\market_system\src\market_system\realtime\stream.py
+-------------------------
+from typing import Any, Iterable, Optional
+
+
+class StreamPublisher:
+    def __init__(self) -> None:
+        pass
+
+    def publish(self, records: Iterable[Any]) -> None:
+        pass
+
+
+class StreamSubscriber:
+    def __init__(self) -> None:
+        pass
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def next(self, timeout_ms: Optional[int] = None) -> Any:
+        pass
+.
+=========================
+C:\dev\market_system\src\market_system\realtime\__init__.py
+-------------------------
+from .stream import StreamPublisher, StreamSubscriber
+
+__all__ = ["StreamPublisher", "StreamSubscriber"]
+.
+=========================
+C:\dev\market_system\src\market_system\storage\schema.py
+-------------------------
+from __future__ import annotations
+
+from typing import Any, Dict
+
+
+class TradeSchema:
+    # canonical column names
+    COLUMNS = ["ts", "price", "qty", "side", "trade_id", "seq"]
+
+    def to_dict(self) -> Dict[str, Any]:
+        # placeholder dtype hints; refine later (Arrow/Parquet dtypes)
+        return {
+            "ts": "timestamp[ns]",
+            "price": "float64",
+            "qty": "int32",
+            "side": "int8",  # 1=buy, -1=sell (tbd)
+            "trade_id": "int64",
+            "seq": "int64",
+        }
+
+
+class DepthSchema:
+    COLUMNS = [
+        "ts",
+        "side",  # 1=bid, -1=ask
+        "level",  # 0..N-1
+        "price",
+        "qty",
+        "event_type",  # add/update/delete (tbd)
+    ]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ts": "timestamp[ns]",
+            "side": "int8",
+            "level": "int16",
+            "price": "float64",
+            "qty": "int32",
+            "event_type": "int8",
+        }
+
+
+class AlignedSchema:
+    COLUMNS = [
+        "ts",
+        "trade_idx",
+        "depth_idx",
+        "match_type",  # exact/nearest/none (tbd)
+        "qty",
+        "side",
+        "delta_price",  # optional alignment features
+        "delta_ts_ns",
+    ]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ts": "timestamp[ns]",
+            "trade_idx": "int64",
+            "depth_idx": "int64",
+            "match_type": "int8",
+            "qty": "int32",
+            "side": "int8",
+            "delta_price": "float64",
+            "delta_ts_ns": "int64",
+        }
+.
+=========================
+C:\dev\market_system\src\market_system\storage\writer.py
+-------------------------
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Iterable, Optional
+
+
+def _need_pyarrow() -> tuple[Any, Any]:
+    """
+    Import pyarrow lazily and raise an actionable error if it's missing.
+    Returns (pa, pq).
+    """
+    try:
+        import pyarrow as pa  # type: ignore[import-not-found]
+        import pyarrow.parquet as pq  # type: ignore[import-not-found]
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(
+            "pyarrow is required for ParquetWriter. Install with: pip install -e .[storage]"
+        ) from e
+    return pa, pq
+
+
+def _to_arrow_table(obj: Any) -> Any:
+    """
+    Best-effort conversion to a pyarrow.Table.
+    Supports: pyarrow.Table, pandas.DataFrame, list-of-dicts.
+    """
+    pa, _ = _need_pyarrow()
+    # Already a table
+    if isinstance(obj, pa.Table):
+        return obj
+
+    # Pandas DataFrame â†’ Arrow
+    try:
+        import pandas as pd  # type: ignore[import-not-found]
+
+        if isinstance(obj, pd.DataFrame):
+            return pa.Table.from_pandas(obj, preserve_index=False)
+    except Exception:
+        # pandas is optional; ignore if unavailable
+        pass
+
+    # List[dict] â†’ Arrow
+    if isinstance(obj, list) and (len(obj) == 0 or isinstance(obj[0], dict)):
+        return pa.Table.from_pylist(obj)
+
+    raise TypeError(
+        "Unsupported input type for ParquetWriter.write(). "
+        "Provide a pyarrow.Table, a pandas.DataFrame, or a list of dicts."
+    )
+
+
+class ParquetWriter:
+    """
+    Thin wrapper over pyarrow.parquet with safe defaults.
+    """
+
+    def __init__(
+        self,
+        *,
+        compression: str = "zstd",
+        coerce_timestamps: str = "us",
+        use_dictionary: Optional[bool] = None,
+    ) -> None:
+        self.compression = compression
+        self.coerce_timestamps = coerce_timestamps
+        self.use_dictionary = use_dictionary
+
+    def write(
+        self,
+        table: Any,
+        path: str | Path,
+        partitioning: Optional[dict] = None,
+    ) -> None:
+        pa, pq = _need_pyarrow()
+        tbl = _to_arrow_table(table)
+
+        out = Path(path)
+        if partitioning:
+            # Expect partitioning like: {"by": ["date", "symbol"]}
+            by: Iterable[str] = partitioning.get("by", [])  # type: ignore[assignment]
+            if not by:
+                raise ValueError('partitioning must include a non-empty "by" list')
+            out.mkdir(parents=True, exist_ok=True)
+            pq.write_to_dataset(
+                tbl,
+                root_path=str(out),
+                partition_cols=list(by),
+                compression=self.compression,
+                coerce_timestamps=self.coerce_timestamps,
+                use_dictionary=self.use_dictionary,
+            )
+        else:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            pq.write_table(
+                tbl,
+                str(out),
+                compression=self.compression,
+                coerce_timestamps=self.coerce_timestamps,
+                use_dictionary=self.use_dictionary,
+            )
+
+
+class SCIDWriter:
+    """
+    Placeholder. We are not writing SCID in this project.
+    Kept only to preserve the public surface for now.
+    """
+
+    def __init__(self) -> None:  # pragma: no cover
+        pass
+
+    def write(self, table: Any, path: str) -> None:  # pragma: no cover
+        raise NotImplementedError("SCIDWriter is intentionally not implemented.")
+.
+=========================
+C:\dev\market_system\src\market_system\storage\__init__.py
+-------------------------
+from .schema import TradeSchema, DepthSchema, AlignedSchema
+from .writer import ParquetWriter, SCIDWriter
+
+__all__ = ["TradeSchema", "DepthSchema", "AlignedSchema", "ParquetWriter", "SCIDWriter"]
+.
+=========================
+C:\dev\market_system\src\market_system\viewer\app.py
+-------------------------
+# src/market_system/viewer/app.py
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Optional, Any
+
+# Defer/guard imports so the repo works without viewer deps installed
+_import_error: Exception | None = None
+try:
+    from PySide6.QtWidgets import (
+        QApplication,
+        QMainWindow,
+        QFileDialog,
+        QMessageBox,
+    )
+    from PySide6.QtGui import QAction
+    from PySide6.QtCore import QTimer
+    import pyqtgraph as pg
+except Exception as e:  # noqa: BLE001
+    _import_error = e
+
+
+class ViewerApp:
+    def __init__(self) -> None:
+        self._app: Optional["QApplication"] = None
+        self._win: Optional["QMainWindow"] = None
+        self._plot: Optional[Any] = None  # pg.PlotWidget (no stubs)
+        self._curve: Optional[Any] = None  # pg.PlotDataItem (no stubs)
+        self._current_path: Optional[Path] = None
+
+        # Replay state
+        self._timer: Optional[QTimer] = None
+        self._r_ts = None  # numpy.ndarray
+        self._r_px = None  # numpy.ndarray
+        self._r_idx: int = 0
+        self._r_step: int = 200  # points per tick
+        self._r_running: bool = False
+
+    def start(self) -> None:
+        if _import_error:
+            raise RuntimeError(
+                "Viewer dependencies not installed. Install with: pip install -e .[viewer]"
+            ) from _import_error
+
+        self._app = QApplication.instance() or QApplication([])
+        self._win = QMainWindow()
+        self._win.setWindowTitle("Market System Viewer")
+        self._win.resize(1280, 800)
+
+        # Central plot
+        self._plot = pg.PlotWidget()
+        self._plot.showGrid(x=True, y=True, alpha=0.3)
+        self._plot.setLabel("bottom", "ts")
+        self._plot.setLabel("left", "price")
+        self._curve = self._plot.plot([], [], pen=None, symbol="o", symbolSize=3)
+        self._win.setCentralWidget(self._plot)
+        self._win.statusBar().showMessage("Ready")
+
+        # Menus
+        mbar = self._win.menuBar()
+        file_menu = mbar.addMenu("&File")
+        replay_menu = mbar.addMenu("&Replay")
+
+        open_act = QAction("Open Parquet...", self._win)
+        open_act.triggered.connect(self._on_open_parquet)
+        file_menu.addAction(open_act)
+
+        demo_act = QAction("Load Demo Data", self._win)
+        demo_act.triggered.connect(self._on_load_demo)
+        file_menu.addAction(demo_act)
+
+        clear_act = QAction("Clear", self._win)
+        clear_act.triggered.connect(self._clear_plot)
+        file_menu.addAction(clear_act)
+
+        exit_act = QAction("Exit", self._win)
+        exit_act.triggered.connect(self._win.close)
+        file_menu.addAction(exit_act)
+
+        # Replay actions
+        r_parquet_act = QAction("Replay Parquet...", self._win)
+        r_parquet_act.triggered.connect(self._on_replay_parquet)
+        replay_menu.addAction(r_parquet_act)
+
+        r_demo_act = QAction("Replay Demo", self._win)
+        r_demo_act.triggered.connect(self._on_replay_demo)
+        replay_menu.addAction(r_demo_act)
+
+        r_play_act = QAction("Play / Pause", self._win)
+        r_play_act.triggered.connect(self._on_play_pause)
+        replay_menu.addAction(r_play_act)
+
+        r_stop_act = QAction("Stop", self._win)
+        r_stop_act.triggered.connect(self._on_stop)
+        replay_menu.addAction(r_stop_act)
+
+        self._timer = QTimer(self._win)
+        self._timer.setInterval(30)  # ~33 FPS-ish; we step multiple points per tick
+        self._timer.timeout.connect(self._on_tick)
+
+        self._win.show()
+        self._app.exec()
+
+    # ---------- basic load / plot ----------
+
+    def _on_open_parquet(self) -> None:
+        assert self._win is not None
+        win = self._win
+        path, _ = QFileDialog.getOpenFileName(
+            win,
+            "Open Parquet",
+            str(Path.cwd()),
+            "Parquet Files (*.parquet);;All Files (*.*)",
+        )
+        if not path:
+            return
+        try:
+            p = Path(path)
+            self._load_parquet(p)
+            self._current_path = p
+            win.statusBar().showMessage(f"Loaded {path}")
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(win, "Error", f"Failed to load {path}\n{e}")
+
+    def _on_load_demo(self) -> None:
+        import numpy as np
+        import pyarrow as pa
+
+        n = 500
+        ts = np.arange(n, dtype="int64")
+        price = np.cumsum(np.random.normal(0, 0.5, n)) + 100.0
+        tbl = pa.table({"ts": ts, "price": price})
+        self._plot_table(tbl, "demo data")
+
+    def _clear_plot(self) -> None:
+        if self._curve is None or self._plot is None or self._win is None:
+            return
+        self._curve.setData([], [])
+        self._plot.enableAutoRange()
+        self._win.statusBar().showMessage("Cleared")
+
+    # ---------- replay ----------
+
+    def _on_replay_parquet(self) -> None:
+        assert self._win is not None
+        path, _ = QFileDialog.getOpenFileName(
+            self._win,
+            "Replay Parquet",
+            str(Path.cwd()),
+            "Parquet Files (*.parquet);;All Files (*.*)",
+        )
+        if not path:
+            return
+        try:
+            tbl = self._read_parquet(Path(path))
+            self._start_replay_from_table(tbl, Path(path).name)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self._win, "Error", f"Failed to start replay\n{e}")
+
+    def _on_replay_demo(self) -> None:
+        import numpy as np
+        import pyarrow as pa
+
+        n = 10_000
+        ts = np.arange(n, dtype="int64")
+        price = 100.0 + np.cumsum(np.random.normal(0, 0.05, n))
+        tbl = pa.table({"ts": ts, "price": price})
+        self._start_replay_from_table(tbl, "demo replay")
+
+    def _on_play_pause(self) -> None:
+        if self._timer is None:
+            return
+
+        win = self._win  # narrow Optional for mypy
+
+        if self._r_ts is None:
+            if win is not None:
+                win.statusBar().showMessage("No replay loaded")
+            return
+
+        if self._r_running:
+            self._timer.stop()
+            self._r_running = False
+            if win is not None:
+                win.statusBar().showMessage("Paused")
+        else:
+            self._timer.start()
+            self._r_running = True
+            if win is not None:
+                win.statusBar().showMessage("Playing")
+
+    def _on_stop(self) -> None:
+        if self._timer:
+            self._timer.stop()
+        self._r_running = False
+        self._r_ts = None
+        self._r_px = None
+        self._r_idx = 0
+        if self._curve:
+            self._curve.setData([], [])
+        if self._plot:
+            self._plot.enableAutoRange()
+        if self._win:
+            self._win.statusBar().showMessage("Stopped")
+
+    def _on_tick(self) -> None:
+        if (
+            not self._r_running
+            or self._r_ts is None
+            or self._r_px is None
+            or self._curve is None
+        ):
+            return
+        n = self._r_ts.shape[0]
+        if self._r_idx >= n:
+            self._on_stop()
+            if self._win:
+                self._win.statusBar().showMessage("Replay finished")
+            return
+        end = min(self._r_idx + self._r_step, n)
+        self._curve.setData(self._r_ts[:end], self._r_px[:end])
+        self._r_idx = end
+
+    def _start_replay_from_table(self, tbl, label: str) -> None:
+        import pyarrow as pa
+
+        # pick 'ts' and 'price' or fallback to first two numeric columns
+        names = tbl.column_names
+        if "ts" in names and "price" in names:
+            ts_col = tbl.column("ts")
+            price_col = tbl.column("price")
+        else:
+            numeric_ix = [
+                i
+                for i, col in enumerate(tbl.columns)
+                if pa.types.is_integer(col.type) or pa.types.is_floating(col.type)
+            ]
+            if len(numeric_ix) < 2:
+                raise ValueError(
+                    "Expected columns 'ts' and 'price' or at least two numeric columns."
+                )
+            ts_col = tbl.column(numeric_ix[0])
+            price_col = tbl.column(numeric_ix[1])
+
+        ts = ts_col.to_numpy(zero_copy_only=False)
+        price = price_col.to_numpy(zero_copy_only=False)
+
+        if pa.types.is_timestamp(ts_col.type):
+            unit = ts_col.type.unit  # "s","ms","us","ns"
+            scale = {"s": 1.0, "ms": 1e-3, "us": 1e-6, "ns": 1e-9}.get(unit, 1.0)
+            ts = ts.astype("float64") * scale
+
+        # reset state and prime chart
+        if self._timer:
+            self._timer.stop()
+        self._r_ts = ts
+        self._r_px = price
+        self._r_idx = 0
+        self._r_running = False
+
+        if self._curve:
+            self._curve.setData([], [])
+        if self._plot:
+            self._plot.enableAutoRange()
+        if self._win:
+            self._win.setWindowTitle(f"Market System Viewer â€” {label}")
+            self._win.statusBar().showMessage(f"Replay loaded: {len(price)} rows")
+
+        # auto-start
+        self._on_play_pause()
+
+    # ---------- load helpers ----------
+
+    def _load_parquet(self, path: Path) -> None:
+        tbl = self._read_parquet(path)
+        self._plot_table(tbl, path.name)
+
+    def _read_parquet(self, path: Path):
+        import pyarrow.parquet as pq
+
+        if path.is_dir():
+            ds = pq.ParquetDataset(str(path))
+            return ds.read()
+        return pq.read_table(str(path))
+
+    def _plot_table(self, tbl, label: str) -> None:
+        import pyarrow as pa
+
+        assert (
+            self._curve is not None and self._plot is not None and self._win is not None
+        )
+        curve = self._curve
+        plot = self._plot
+        win = self._win
+
+        # Prefer explicit 'ts' and 'price'; else pick first two numeric columns.
+        names = tbl.column_names
+        if "ts" in names and "price" in names:
+            ts_col = tbl.column("ts")
+            price_col = tbl.column("price")
+        else:
+            numeric_names = [
+                n
+                for n, col in zip(names, tbl.columns)
+                if pa.types.is_integer(col.type) or pa.types.is_floating(col.type)
+            ]
+            if len(numeric_names) < 2:
+                raise ValueError(
+                    "Expected columns 'ts' and 'price' or at least two numeric columns."
+                )
+            ts_col = tbl.column(numeric_names[0])
+            price_col = tbl.column(numeric_names[1])
+
+        ts = ts_col.to_numpy(zero_copy_only=False)
+        price = price_col.to_numpy(zero_copy_only=False)
+
+        # If ts is timestamp, convert to seconds as float for plotting
+        if pa.types.is_timestamp(ts_col.type):
+            unit = ts_col.type.unit  # "s", "ms", "us", or "ns"
+            scale = {"s": 1.0, "ms": 1e-3, "us": 1e-6, "ns": 1e-9}.get(unit, 1.0)
+            ts = ts.astype("float64") * scale
+
+        curve.setData(ts, price)
+        plot.enableAutoRange()
+        win.setWindowTitle(f"Market System Viewer â€” {label}")
+        win.statusBar().showMessage(f"Rows: {len(price)}")
+
+    def stop(self) -> None:
+        # placeholder for clean shutdown; no-op
+        pass
+.
+=========================
+C:\dev\market_system\src\market_system\viewer\__init__.py
+-------------------------
+from .app import ViewerApp
+
+__all__ = ["ViewerApp"]
+.
