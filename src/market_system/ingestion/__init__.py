@@ -1,3 +1,6 @@
-from .reader import SCIDReader, DepthReader
+from .reader import ScidIngestor, IngestConfig
 
-__all__ = ["SCIDReader", "DepthReader"]
+# Back-compat alias so older references still work if any:
+SCIDReader = ScidIngestor
+
+__all__ = ["ScidIngestor", "IngestConfig", "SCIDReader"]

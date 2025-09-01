@@ -1,12 +1,22 @@
 import argparse
 import sys
 import shutil
-import subprocess
 import platform
+from pathlib import Path
+
+from market_system.ingestion.reader import ScidIngestor, IngestConfig
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
-    print(f"[ingest] source={args.source}")
+    cfg = IngestConfig(
+        source=Path(args.source),
+        out_root=Path(args.out or "data"),
+        symbol=args.symbol,  # root like "ES"
+        start=args.start,
+        end=args.end,
+        overwrite=args.overwrite,
+    )
+    ScidIngestor().ingest(cfg)
     return 0
 
 
@@ -16,31 +26,8 @@ def cmd_align(args: argparse.Namespace) -> int:
 
 
 def cmd_store(args: argparse.Namespace) -> int:
-    from pathlib import Path
-
-    try:
-        import pyarrow.parquet as pq  # read source parquet
-        from market_system.storage.writer import ParquetWriter
-    except Exception:
-        print("ERROR: storage deps missing. Install with: pip install -e .[storage]")
-        return 2
-
-    src = Path(args.table)
-    dst = Path(args.parquet)
-
-    try:
-        # read the input as parquet (file or dataset dir)
-        if src.is_dir():
-            tbl = pq.ParquetDataset(str(src)).read()
-        else:
-            tbl = pq.read_table(str(src))
-
-        ParquetWriter().write(tbl, dst)
-        print(f"[store] wrote {dst}")
-        return 0
-    except Exception as e:  # keep this narrow; we’ll refine when readers expand
-        print(f"[store] failed: {e}")
-        return 1
+    print(f"[store] table={args.table} parquet={args.parquet}")
+    return 0
 
 
 def cmd_replay(args: argparse.Namespace) -> int:
@@ -57,13 +44,13 @@ def cmd_viewer(args: argparse.Namespace) -> int:
 
 
 def _run(cmd: list[str]) -> tuple[int, str]:
+    import subprocess as sp
+
     try:
-        out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+        out = sp.check_output(cmd, stderr=sp.STDOUT, text=True)
         return 0, out.strip()
-    except (OSError, subprocess.CalledProcessError) as e:
-        msg = (
-            e.output.strip() if isinstance(e, subprocess.CalledProcessError) else str(e)
-        )
+    except (OSError, sp.CalledProcessError) as e:
+        msg = e.output.strip() if isinstance(e, sp.CalledProcessError) else str(e)
         return 1, msg
 
 
@@ -72,12 +59,10 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     print(f"OS: {platform.system()} {platform.release()} ({platform.version()})")
     print(f"Python: {sys.executable}")
 
-    # Python tools (in venv)
     for name in ["pre-commit", "black", "ruff", "mypy", "pytest"]:
         path = shutil.which(name)
         print(f"{name:>10}: {'OK ' + path if path else 'NOT FOUND'}")
 
-    # CMake
     cmake_path = shutil.which("cmake")
     if cmake_path:
         code, out = _run(["cmake", "--version"])
@@ -90,7 +75,6 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     else:
         print(f"{'cmake':>10}: NOT FOUND")
 
-    # MSVC cl (only meaningful on Windows)
     if platform.system() == "Windows":
         cl_path = shutil.which("cl")
         if cl_path:
@@ -103,7 +87,6 @@ def cmd_doctor(_: argparse.Namespace) -> int:
                 f"{'cl':>10}: NOT FOUND (open x64 Native Tools for VS 2022 or add MSVC to PATH)"
             )
 
-    # Viewer deps sanity
     try:
         import PySide6  # noqa: F401
         import pyqtgraph  # noqa: F401
@@ -124,8 +107,24 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="market-system")
     sub = p.add_subparsers(dest="command", required=True)
 
-    sp = sub.add_parser("ingest", help="ingest raw sources (SCID/depth/etc.)")
-    sp.add_argument("source", help="path to raw source (file or dir)")
+    sp = sub.add_parser(
+        "ingest",
+        help="Convert ES SCID + Depth to Parquet (daily partitions, only days with depth)",
+    )
+    sp.add_argument("source", help="Path to SierraChart Data dir or a .scid file")
+    sp.add_argument(
+        "--symbol",
+        default="ES",
+        help="Root symbol (e.g., ES). We auto-detect the active contract from filenames.",
+    )
+    sp.add_argument("--out", help="Output root for dataset (default: ./data)")
+    sp.add_argument("--start", help="Start date (YYYY-MM-DD, UTC)")
+    sp.add_argument("--end", help="End date (YYYY-MM-DD, UTC)")
+    sp.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Clear existing output for this symbol/contract before writing",
+    )
     sp.set_defaults(func=cmd_ingest)
 
     sp = sub.add_parser("align", help="align trades and depth")
